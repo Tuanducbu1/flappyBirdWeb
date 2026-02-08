@@ -1,6 +1,7 @@
 import { Bird } from '../entities/Bird.js';
 import { PipeManager } from '../entities/Pipe.js';
 import { Background } from '../entities/Background.js';
+import { Leaderboard } from './Leaderboard.js';
 
 export class Game {
     constructor(canvas) {
@@ -8,7 +9,7 @@ export class Game {
         this.ctx = canvas.getContext('2d');
         this.width = canvas.width;
         this.height = canvas.height;
-        
+
         this.state = 'START'; // START, PLAYING, GAMEOVER
         this.score = 0;
         this.bestScore = parseInt(localStorage.getItem('flappy_best_score')) || 0;
@@ -17,22 +18,27 @@ export class Game {
         this.bird = new Bird(this);
         this.pipeManager = new PipeManager(this);
         this.background = new Background(this);
-        
+        this.leaderboard = new Leaderboard();
+
         // Loop bindings
         this.loop = this.loop.bind(this);
         this.lastTime = 0;
-        
+
         // UI Elements
         this.scoreDisplay = document.getElementById('score-display');
         this.startScreen = document.getElementById('start-screen');
         this.gameOverScreen = document.getElementById('game-over-screen');
         this.finalScoreEl = document.getElementById('current-score');
         this.bestScoreEl = document.getElementById('best-score');
-        
+        this.leaderboardList = document.getElementById('leaderboard-list');
+        this.nameInputContainer = document.getElementById('name-input-container');
+        this.playerNameInput = document.getElementById('player-name');
+        this.submitScoreBtn = document.getElementById('submit-score-btn');
+
         this.setupInputs();
         this.resize();
         window.addEventListener('resize', () => this.resize());
-        
+
         // Start loop
         requestAnimationFrame(this.loop);
     }
@@ -51,17 +57,31 @@ export class Game {
         });
 
         window.addEventListener('touchstart', (e) => {
+            // Fix: Allow button clicks to propagate
+            if (e.target.tagName === 'BUTTON') return;
+
             e.preventDefault(); // Prevent scrolling
             action();
         }, { passive: false });
-        
+
         window.addEventListener('mousedown', (e) => {
-             // Only jump if not clicking UI buttons
-            if(e.target.tagName !== 'BUTTON') action();
+            // Only jump if not clicking UI buttons
+            if (e.target.tagName !== 'BUTTON') action();
         });
 
         document.getElementById('restart-btn').addEventListener('click', () => {
             this.resetGame();
+        });
+
+        this.submitScoreBtn.addEventListener('click', () => {
+            const name = this.playerNameInput.value.trim() || 'Anonymous';
+            this.submitScoreBtn.disabled = true;
+            this.submitScoreBtn.textContent = 'Saving...';
+
+            this.leaderboard.addScore(name, this.score).then(() => {
+                this.nameInputContainer.classList.add('hidden');
+                this.updateLeaderboardUI();
+            });
         });
     }
 
@@ -77,6 +97,9 @@ export class Game {
         this.state = 'PLAYING';
         this.startScreen.classList.add('hidden');
         this.gameOverScreen.classList.add('hidden');
+        this.nameInputContainer.classList.add('hidden'); // Ensure input is hidden on start
+        this.submitScoreBtn.disabled = false;
+        this.submitScoreBtn.textContent = 'Save';
         this.score = 0;
         this.updateScoreUI();
     }
@@ -85,12 +108,20 @@ export class Game {
         this.state = 'GAMEOVER';
         this.gameOverScreen.classList.remove('hidden');
         this.finalScoreEl.textContent = this.score;
-        
+
         if (this.score > this.bestScore) {
             this.bestScore = this.score;
             localStorage.setItem('flappy_best_score', this.bestScore);
         }
         this.bestScoreEl.textContent = this.bestScore;
+
+        // Leaderboard Logic
+        this.updateLeaderboardUI();
+
+        // Show input if score is decent (e.g. > 0)
+        if (this.score > 0) {
+            this.nameInputContainer.classList.remove('hidden');
+        }
     }
 
     resetGame() {
@@ -105,6 +136,28 @@ export class Game {
 
     updateScoreUI() {
         this.scoreDisplay.textContent = this.score;
+    }
+
+    async updateLeaderboardUI() {
+        this.leaderboardList.innerHTML = '<li>Loading...</li>';
+        const scores = await this.leaderboard.getTopScores();
+
+        this.leaderboardList.innerHTML = '';
+        if (scores.length === 0) {
+            this.leaderboardList.innerHTML = '<li>No scores yet</li>';
+            return;
+        }
+
+        scores.forEach((s, index) => {
+            const li = document.createElement('li');
+            li.textContent = `#${index + 1} ${s.name}: ${s.score}`;
+            // Highlight current user?
+            if (s.score === this.score && this.state === 'GAMEOVER') {
+                li.style.color = '#e67e22';
+                li.style.fontWeight = 'bold';
+            }
+            this.leaderboardList.appendChild(li);
+        });
     }
 
     loop(timestamp) {
